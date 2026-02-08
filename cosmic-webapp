@@ -78,15 +78,32 @@ create_webapp() {
     local url="$2"
     local browser="$3"
     local category="$4"
-    
+    local icon_url="${5:-}"
+
     local sname=$(safe_name "$name")
     local desktop_file="$WEBAPP_DIR/webapp-${sname}.desktop"
     local icon_file="$ICON_DIR/${sname}.png"
     local profile_dir="$PROFILE_DIR/${sname}"
-    
+
     # Download icon
     echo -e "${BLUE}📥 Downloading icon...${NC}"
-    if download_favicon "$url" "$sname"; then
+    if [ -n "$icon_url" ]; then
+        # Custom icon URL provided (e.g. from dashboardicons.com)
+        if wget -q --timeout=10 "$icon_url" -O "$icon_file" 2>/dev/null && [ -s "$icon_file" ]; then
+            echo -e "${GREEN}✅ Custom icon downloaded${NC}"
+            icon_path="$icon_file"
+        else
+            rm -f "$icon_file"
+            echo -e "${YELLOW}⚠️  Custom icon failed, trying favicon...${NC}"
+            if download_favicon "$url" "$sname"; then
+                echo -e "${GREEN}✅ Favicon downloaded${NC}"
+                icon_path="$icon_file"
+            else
+                echo -e "${YELLOW}⚠️  Using default icon${NC}"
+                icon_path="web-browser"
+            fi
+        fi
+    elif download_favicon "$url" "$sname"; then
         echo -e "${GREEN}✅ Icon downloaded${NC}"
         icon_path="$icon_file"
     else
@@ -135,6 +152,9 @@ DESKTOP
 
     chmod +x "$desktop_file"
     update-desktop-database "$WEBAPP_DIR" 2>/dev/null
+
+    # Restart COSMIC panel so the dock picks up the new icon
+    killall cosmic-panel 2>/dev/null
 
     echo ""
     echo -e "${GREEN}✅ Webapp '$name' created!${NC}"
@@ -246,6 +266,9 @@ remove_webapp() {
     done
 
     update-desktop-database "$WEBAPP_DIR" 2>/dev/null
+
+    # Restart COSMIC panel so the dock updates
+    killall cosmic-panel 2>/dev/null
 }
 
 # Cleanup: restore main screen buffer and terminal settings on exit
@@ -327,6 +350,9 @@ main_menu() {
                 # Add https:// if missing
                 [[ ! "$url" =~ ^https?:// ]] && url="https://$url"
 
+                icon_url=$(gum input --placeholder "Icon URL from https://dashboardicons.com (blank = auto favicon)"); rc=$?
+                check_signal $rc
+
                 browser=$(gum choose --header "Browser:" \
                             "Chromium (recommended)" \
                             "Brave"); rc=$?
@@ -364,7 +390,7 @@ main_menu() {
                 [ -z "$category" ] && continue
 
                 gum spin --spinner dot --title "Creating webapp..." -- sleep 1
-                create_webapp "$name" "$url" "$browser" "$category"
+                create_webapp "$name" "$url" "$browser" "$category" "$icon_url"
                 status_msg="✅ Webapp '$name' created!"
                 ;;
 
@@ -379,10 +405,10 @@ main_menu() {
 case "${1:-}" in
     create)
         if [ $# -lt 3 ]; then
-            echo "Usage: $0 create <name> <url> [browser] [category]"
+            echo "Usage: $0 create <name> <url> [browser] [category] [icon_url]"
             exit 1
         fi
-        create_webapp "$2" "$3" "${4:-chromium}" "${5:-Network}"
+        create_webapp "$2" "$3" "${4:-chromium}" "${5:-Network}" "${6:-}"
         ;;
     list)
         list_webapps
