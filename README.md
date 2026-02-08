@@ -12,6 +12,10 @@ Turn any website into a standalone desktop app on [COSMIC](https://github.com/po
           Web App Manager
 ```
 
+## Demo
+
+![cosmic-webapp demo](demo.gif)
+
 ## Features
 
 - Interactive TUI powered by [gum](https://github.com/charmbracelet/gum)
