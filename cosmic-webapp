@@ -1,0 +1,396 @@
+#!/bin/bash
+# cosmic-webapp - Interactive webapp creator for COSMIC (Omarchy-style)
+# v2.1 - Fixed Wayland app_id support for proper dock integration
+
+# Install gum if not present
+if ! command -v gum &> /dev/null; then
+    echo "📦 Installing gum (interactive UI)..."
+    sudo pacman -S --needed gum
+fi
+
+# Colors
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Directories
+WEBAPP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/webapps"
+PROFILE_DIR="$HOME/.local/share/chromium-webapps"
+mkdir -p "$WEBAPP_DIR" "$ICON_DIR" "$PROFILE_DIR"
+
+# Generate safe name from app name
+safe_name() {
+    echo "$1" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]//g'
+}
+
+# Download favicon
+download_favicon() {
+    local url="$1"
+    local app_name="$2"
+    local icon_file="$ICON_DIR/${app_name}.png"
+    local tmp_file="$icon_file.tmp"
+    
+    # Extract domain
+    local domain=$(echo "$url" | sed -e 's|^https\?://||' -e 's|/.*||')
+    
+    # Try multiple favicon sources (best quality first)
+    local favicon_urls=(
+        "https://${domain}/apple-touch-icon.png"
+        "https://${domain}/favicon-192x192.png"
+        "https://${domain}/favicon.png"
+        "https://${domain}/favicon.ico"
+        "https://www.google.com/s2/favicons?domain=${domain}&sz=128"
+    )
+    
+    for favicon_url in "${favicon_urls[@]}"; do
+        if wget -q --timeout=5 "$favicon_url" -O "$tmp_file" 2>/dev/null; then
+            if [ ! -s "$tmp_file" ]; then
+                rm -f "$tmp_file"
+                continue
+            fi
+            
+            # Convert .ico to PNG if needed
+            if file "$tmp_file" | grep -q "MS Windows icon"; then
+                if command -v convert &> /dev/null; then
+                    convert "$tmp_file[0]" -resize 128x128 "$icon_file" 2>/dev/null
+                    rm -f "$tmp_file"
+                    [ -f "$icon_file" ] && return 0
+                else
+                    rm -f "$tmp_file"
+                    continue
+                fi
+            else
+                mv "$tmp_file" "$icon_file" && return 0
+            fi
+        fi
+        rm -f "$tmp_file"
+    done
+    
+    return 1
+}
+
+# Create webapp
+create_webapp() {
+    local name="$1"
+    local url="$2"
+    local browser="$3"
+    local category="$4"
+    
+    local sname=$(safe_name "$name")
+    local desktop_file="$WEBAPP_DIR/webapp-${sname}.desktop"
+    local icon_file="$ICON_DIR/${sname}.png"
+    local profile_dir="$PROFILE_DIR/${sname}"
+    
+    # Download icon
+    echo -e "${BLUE}📥 Downloading icon...${NC}"
+    if download_favicon "$url" "$sname"; then
+        echo -e "${GREEN}✅ Icon downloaded${NC}"
+        icon_path="$icon_file"
+    else
+        echo -e "${YELLOW}⚠️  Using default icon${NC}"
+        icon_path="web-browser"
+    fi
+    
+    # Generate Wayland app_id matching Chromium's algorithm:
+    # chrome-<url_without_scheme_with_/_replaced_by___>-Default
+    # Example: https://auth.ente.io/auth -> chrome-auth.ente.io__auth-Default
+    local url_path=$(echo "$url" | sed 's|^https\?://||')
+    local url_escaped=$(echo "$url_path" | sed 's|/|__|g')
+    local wm_class="chrome-${url_escaped}-Default"
+
+    # Exec command based on browser (isolated profile per webapp)
+    # Note: --class flag is ignored on Wayland, but kept for X11 compatibility
+    case $browser in
+        chromium)
+            exec_cmd="chromium --app=\"$url\" --class=\"$wm_class\" --user-data-dir=\"$profile_dir\""
+            ;;
+        brave)
+            # Brave uses the same pattern as Chromium
+            exec_cmd="brave --app=\"$url\" --class=\"$wm_class\" --user-data-dir=\"$profile_dir\""
+            ;;
+        *)
+            exec_cmd="chromium --app=\"$url\" --class=\"$wm_class\" --user-data-dir=\"$profile_dir\""
+            ;;
+    esac
+
+    # Create .desktop file
+    cat > "$desktop_file" << DESKTOP
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=$name
+Comment=Web App - $url
+Icon=$icon_path
+Exec=$exec_cmd
+Categories=$category;WebApp;
+Terminal=false
+StartupNotify=true
+StartupWMClass=$wm_class
+X-WebApp-Browser=$browser
+X-WebApp-Profile=$profile_dir
+DESKTOP
+
+    chmod +x "$desktop_file"
+    update-desktop-database "$WEBAPP_DIR" 2>/dev/null
+
+    echo ""
+    echo -e "${GREEN}✅ Webapp '$name' created!${NC}"
+    echo -e "${BLUE}🚀 Search '$name' in COSMIC launcher${NC}"
+    echo -e "${BLUE}📁 Desktop: $desktop_file${NC}"
+    echo -e "${BLUE}🔒 Profile: $profile_dir${NC}"
+    echo -e "${BLUE}🆔 Wayland app_id: $wm_class${NC}"
+}
+
+# List webapps
+list_webapps() {
+    local webapps=("$WEBAPP_DIR"/webapp-*.desktop)
+
+    if [ ! -e "${webapps[0]}" ]; then
+        gum style --faint "No webapps installed"
+        return
+    fi
+
+    gum style --bold --foreground 99 "📱 Installed Web Apps:"
+    echo ""
+
+    for webapp in "${webapps[@]}"; do
+        local name=$(grep "^Name=" "$webapp" | cut -d'=' -f2)
+        local url=$(grep "^Comment=" "$webapp" | sed 's/^Comment=Web App - //')
+        local browser=$(grep "^X-WebApp-Browser=" "$webapp" 2>/dev/null | cut -d'=' -f2)
+        local profile=$(grep "^X-WebApp-Profile=" "$webapp" 2>/dev/null | cut -d'=' -f2)
+        local profile_size=""
+
+        if [ -d "$profile" ]; then
+            profile_size=$(du -sh "$profile" 2>/dev/null | cut -f1)
+        fi
+
+        echo -e "  • ${name} → ${url}"
+        [ -n "$browser" ] && echo -e "    Browser: $browser  Profile: ${profile_size:-N/A}"
+    done
+}
+
+# Remove webapp (multi-select)
+remove_webapp() {
+    local webapps=("$WEBAPP_DIR"/webapp-*.desktop)
+
+    if [ ! -e "${webapps[0]}" ]; then
+        echo -e "${YELLOW}No webapps to remove${NC}"
+        return
+    fi
+
+    local names=()
+    for webapp in "${webapps[@]}"; do
+        local name=$(grep "^Name=" "$webapp" | cut -d'=' -f2)
+        names+=("$name")
+    done
+
+    local selected rc
+    selected=$(printf '%s\n' "${names[@]}" | gum choose --no-limit \
+        --header "Select webapps to remove (space to select, enter to confirm):" \
+        --selected-prefix "✗ " --unselected-prefix "• "); rc=$?
+    check_signal $rc
+
+    [ -z "$selected" ] && return
+
+    # Parse newline-separated selections into array
+    local selections=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && selections+=("$line")
+    done <<< "$selected"
+
+    # Calculate total profile size
+    local total_profile_size=0
+    local has_profiles=false
+    for app_name in "${selections[@]}"; do
+        local sname=$(safe_name "$app_name")
+        local desktop_file="$WEBAPP_DIR/webapp-${sname}.desktop"
+        if [ -f "$desktop_file" ]; then
+            local profile_path=$(grep "^X-WebApp-Profile=" "$desktop_file" 2>/dev/null | cut -d'=' -f2)
+            if [ -n "$profile_path" ] && [ -d "$profile_path" ]; then
+                has_profiles=true
+            fi
+        fi
+    done
+
+    # Ask once about profile data for all selected webapps
+    local delete_profiles=false
+    if [ "$has_profiles" = true ]; then
+        if gum confirm "Also delete browser profile data for selected webapps?"; then
+            delete_profiles=true
+        fi
+    fi
+
+    # Remove each selected webapp
+    for app_name in "${selections[@]}"; do
+        local sname=$(safe_name "$app_name")
+        local desktop_file="$WEBAPP_DIR/webapp-${sname}.desktop"
+        local profile_path=""
+
+        if [ -f "$desktop_file" ]; then
+            profile_path=$(grep "^X-WebApp-Profile=" "$desktop_file" 2>/dev/null | cut -d'=' -f2)
+        fi
+
+        rm -f "$desktop_file"
+        rm -f "$ICON_DIR/${sname}.png"
+
+        if [ "$delete_profiles" = true ] && [ -n "$profile_path" ] && [ -d "$profile_path" ]; then
+            local size=$(du -sh "$profile_path" 2>/dev/null | cut -f1)
+            rm -rf "$profile_path"
+            echo -e "${GREEN}  ✅ ${app_name} removed (${size} freed)${NC}"
+        else
+            echo -e "${GREEN}  ✅ ${app_name} removed${NC}"
+        fi
+    done
+
+    update-desktop-database "$WEBAPP_DIR" 2>/dev/null
+}
+
+# Cleanup: restore main screen buffer and terminal settings on exit
+cleanup() {
+    tput rmcup 2>/dev/null
+    tput cnorm 2>/dev/null
+    stty sane 2>/dev/null
+}
+
+# Draw the main screen header + webapp list
+draw_main_screen() {
+    clear
+    gum style --foreground 99 --bold \
+'  ██████╗ ██████╗ ███████╗███╗   ███╗██╗ ██████╗
+ ██╔════╝██╔═══██╗██╔════╝████╗ ████║██║██╔════╝
+ ██║     ██║   ██║███████╗██╔████╔██║██║██║
+ ██║     ██║   ██║╚════██║██║╚██╔╝██║██║██║
+ ╚██████╗╚██████╔╝███████║██║ ╚═╝ ██║██║╚██████╗
+  ╚═════╝ ╚═════╝ ╚══════╝╚═╝     ╚═╝╚═╝ ╚═════╝'
+    gum style --faint --italic "         Web App Manager"
+    echo ""
+    list_webapps
+    echo ""
+}
+
+# Exit if last command was killed by a signal (exit code >= 128)
+# 130 = Ctrl+C (SIGINT), 131 = Ctrl+Q/Ctrl+\ (SIGQUIT)
+check_signal() {
+    [ $1 -ge 128 ] && exit 0
+}
+
+# Main menu
+main_menu() {
+    local saved_stty
+    saved_stty=$(stty -g 2>/dev/null)
+
+    # Enter alternate screen buffer (like vim/htop)
+    tput smcup 2>/dev/null
+    # Disable XON/XOFF so Ctrl+Q is not swallowed by the terminal
+    stty -ixon 2>/dev/null
+    # Map Ctrl+Q to SIGQUIT
+    stty quit $'\x11' 2>/dev/null
+    trap cleanup EXIT
+
+    local status_msg=""
+
+    while true; do
+        draw_main_screen
+
+        # Show status message from previous action
+        if [ -n "$status_msg" ]; then
+            gum style --foreground 10 "$status_msg"
+            echo ""
+            status_msg=""
+        fi
+
+        local choice rc
+        choice=$(gum choose \
+                    --header $'What would you like to do?\nctrl+c to quit\n' \
+                    "📱 Create new webapp" \
+                    "🗑️ Remove webapp"); rc=$?
+        check_signal $rc
+
+        # Handle Escape / empty selection
+        [ -z "$choice" ] && continue
+
+        case "$choice" in
+            "📱 Create new webapp")
+                local name url browser category
+
+                name=$(gum input --placeholder "App name (e.g. YouTube)"); rc=$?
+                check_signal $rc
+                [ -z "$name" ] && continue
+
+                url=$(gum input --placeholder "URL (e.g. https://youtube.com)"); rc=$?
+                check_signal $rc
+                [ -z "$url" ] && continue
+
+                # Add https:// if missing
+                [[ ! "$url" =~ ^https?:// ]] && url="https://$url"
+
+                browser=$(gum choose --header "Browser:" \
+                            "Chromium (recommended)" \
+                            "Brave"); rc=$?
+                check_signal $rc
+                [ -z "$browser" ] && continue
+
+                case "$browser" in
+                    "Chromium (recommended)")
+                        if ! command -v chromium &> /dev/null; then
+                            echo -e "${YELLOW}⚠️  Chromium is not installed${NC}"
+                            if gum confirm "Install it now?"; then
+                                sudo pacman -S --needed chromium
+                            else
+                                continue
+                            fi
+                        fi
+                        browser="chromium"
+                        ;;
+                    "Brave")
+                        if ! command -v brave &> /dev/null; then
+                            echo -e "${YELLOW}⚠️  Brave is not installed${NC}"
+                            if gum confirm "Install it now?"; then
+                                sudo pacman -S --needed brave-bin
+                            else
+                                continue
+                            fi
+                        fi
+                        browser="brave"
+                        ;;
+                esac
+
+                category=$(gum choose --header "Category:" \
+                            "Network" "AudioVideo" "Office" "Graphics" "Game"); rc=$?
+                check_signal $rc
+                [ -z "$category" ] && continue
+
+                gum spin --spinner dot --title "Creating webapp..." -- sleep 1
+                create_webapp "$name" "$url" "$browser" "$category"
+                status_msg="✅ Webapp '$name' created!"
+                ;;
+
+            "🗑️ Remove webapp")
+                remove_webapp
+                ;;
+        esac
+    done
+}
+
+# Entry point
+case "${1:-}" in
+    create)
+        if [ $# -lt 3 ]; then
+            echo "Usage: $0 create <name> <url> [browser] [category]"
+            exit 1
+        fi
+        create_webapp "$2" "$3" "${4:-chromium}" "${5:-Network}"
+        ;;
+    list)
+        list_webapps
+        ;;
+    remove)
+        remove_webapp
+        ;;
+    *)
+        main_menu
+        ;;
+esac
