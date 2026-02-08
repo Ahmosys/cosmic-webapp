@@ -79,6 +79,10 @@ Each webapp gets:
 - An isolated browser profile in `~/.local/share/chromium-webapps/`
 - A Wayland `app_id` matching Chromium's algorithm (`chrome-<url>-Default`) for proper window management and dock pinning
 
+## Acknowledgments
+
+This project was developed with the assistance of [Claude](https://claude.ai) (Anthropic).
+
 ## License
 
 [MIT](LICENSE)
