@@ -20,7 +20,7 @@ Turn any website into a standalone desktop app on [COSMIC](https://github.com/po
 
 - Interactive TUI powered by [gum](https://github.com/charmbracelet/gum)
 - Isolated browser profile per webapp (cookies, sessions, data stay separate)
-- Automatic favicon download
+- Custom icon URL support (e.g. from [dashboardicons.com](https://dashboardicons.com)) with automatic favicon fallback
 - Proper Wayland `app_id` generation for COSMIC dock integration
 - Chromium and Brave browser support
 - Standard `.desktop` files — webapps appear in the COSMIC app launcher
@@ -54,6 +54,9 @@ cosmic-webapp
 ```bash
 # Create a webapp
 cosmic-webapp create "YouTube" "https://youtube.com" chromium Network
+
+# Create a webapp with a custom icon
+cosmic-webapp create "Home Assistant" "https://ha.example.com" chromium Network "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/home-assistant.png"
 
 # List installed webapps
 cosmic-webapp list
