@@ -2,19 +2,7 @@
 
 Turn any website into a standalone desktop app on [COSMIC](https://github.com/pop-os/cosmic-epoch) desktop.
 
-```
-  ██████╗ ██████╗ ███████╗███╗   ███╗██╗ ██████╗
- ██╔════╝██╔═══██╗██╔════╝████╗ ████║██║██╔════╝
- ██║     ██║   ██║███████╗██╔████╔██║██║██║
- ██║     ██║   ██║╚════██║██║╚██╔╝██║██║██║
- ╚██████╗╚██████╔╝███████║██║ ╚═╝ ██║██║╚██████╗
-  ╚═════╝ ╚═════╝ ╚══════╝╚═╝     ╚═╝╚═╝ ╚═════╝
-          Web App Manager
-```
-
-## Demo
-
-![cosmic-webapp demo](demo.gif)
+![cosmic-webapp demo](demo-v2.gif)
 
 ## Features
 
